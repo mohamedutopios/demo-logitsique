@@ -89,6 +89,11 @@ services:
 
   nocodb:                         # portail d'injection / modification des référentiels
     image: nocodb/nocodb:latest
+    environment:                  # compte administrateur créé au démarrage (démonstration)
+      NC_ADMIN_EMAIL: admin@example.com
+      NC_ADMIN_PASSWORD: Admin-Kit-2026
+      NC_DISABLE_TELE: "true"
+      NC_ALLOW_LOCAL_EXTERNAL_DBS: "true"   # autorise la connexion à l'entrepôt « dwh » (réseau interne Docker)
     ports: ["8081:8080"]
     volumes:
       - nocodb-data:/usr/app/data
@@ -133,6 +138,18 @@ services:
       - ./outils/services:/app/services:ro
       - ./dbt:/app/dbt:ro
     ports: ["8083:8083"]
+
+  config-interfaces:              # prépare Metabase et NocoDB (comptes, connexions) puis s'arrête
+    build: ./outils
+    image: dwh-logistique-outils:1.0
+    working_dir: /app
+    command: ["python", "services/configurer_interfaces.py"]
+    volumes:
+      - ./outils/services:/app/services:ro
+    depends_on:
+      metabase: {condition: service_started}
+      nocodb: {condition: service_started}
+    restart: "no"
 
   # ---------- Outils Python (générateur, chargeur, dbt, services) : lancés à la demande ----------
   outils:

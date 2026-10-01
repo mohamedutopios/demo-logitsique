@@ -95,6 +95,7 @@ Les modèles dbt se portent en changeant d'adaptateur. Quelques fonctions propre
 | `metabase` | tableaux de bord | 3000 |
 | `nocodb` | portail des référentiels | 8081 |
 | `postgrest` | API du portail client | 3001 |
+| `config-interfaces` | prépare Metabase et NocoDB au démarrage (comptes, connexions), puis s'arrête | — |
 | `outils` | générateur, chargeur, dbt, exports, événements, IA (lancé à la demande) | — |
 
 ### Les interfaces pour suivre chaque étape
@@ -104,8 +105,8 @@ Les modèles dbt se portent en changeant d'adaptateur. Quelques fonctions propre
 | http://localhost:5050 | **pgAdmin** : tables et données de toutes les couches, requêtes SQL, schéma relationnel | aucun (connexions préconfigurées) |
 | http://localhost:8080 | **Redpanda Console** : topics Kafka, messages, retard du chargeur | aucun |
 | http://localhost:8083 | **Documentation dbt** : modèles, colonnes, tests, graphe de lignage | aucun (après `dbt docs generate`) |
-| http://localhost:3000 | **Metabase** : tableaux de bord | compte à créer au premier accès |
-| http://localhost:8081 | **NocoDB** : édition des référentiels comme un tableur | compte à créer au premier accès |
+| http://localhost:3000 | **Metabase** : tableaux de bord, entrepôt déjà connecté (`lecture_bi`) | `admin@example.com` / `Admin-Kit-2026` |
+| http://localhost:8081 | **NocoDB** : édition des référentiels comme un tableur, base « Référentiels » déjà branchée (`portail_ref`) | `admin@example.com` / `Admin-Kit-2026` |
 | http://localhost:3001 | **PostgREST** : API du portail client | jeton JWT (section 13) |
 | dossiers `depot/` et `exports/` | fichiers déposés et produits | Finder / Explorateur |
 
@@ -221,7 +222,14 @@ scikit-learn, dbt-core 1.11 et dbt-postgres 1.11. Comptez 2 à 4 minutes.
   `extraction` en lecture seule ;
 - `dwh` exécute `dwh/01_init_dwh.sql` : zones `raw`, `ref`, `ia`, `diffusion`, **référentiels remplis** et rôles ;
 - `redpanda-init` crée les topics puis s'arrête (`Exited (0)` dans `docker compose ps -a`, c'est normal) ;
-- `pgadmin`, `dbt-docs`, `metabase`, `nocodb`, `postgrest` et `redpanda-console` démarrent.
+- `pgadmin`, `dbt-docs`, `metabase`, `nocodb`, `postgrest` et `redpanda-console` démarrent ;
+- `config-interfaces` prépare Metabase et NocoDB, puis s'arrête (`Exited (0)`, c'est normal) :
+  - **Metabase** : compte administrateur créé, entrepôt ajouté avec le rôle de lecture `lecture_bi` ;
+  - **NocoDB** : compte administrateur créé, base « Référentiels (entrepôt dwh) » branchée sur le schéma `ref` avec
+    le rôle `portail_ref`.
+
+  Metabase met 1 à 2 minutes à démarrer : `config-interfaces` l'attend. Identifiants des deux outils :
+  `admin@example.com` / `Admin-Kit-2026`.
 
 Le projet Compose s'appelle `dwh-logistique-v1_0` : ses conteneurs et volumes sont distincts de ceux des autres
 versions du kit. Deux versions ne peuvent pas tourner en même temps (mêmes ports) : arrêtez l'une
@@ -232,7 +240,13 @@ versions du kit. Deux versions ne peuvent pas tourner en même temps (mêmes por
 ```bash
 docker compose ps
 ```
-Attendu : `sources-db`, `dwh` et `redpanda` en `(healthy)`, les autres en `Up`.
+Attendu : `sources-db`, `dwh` et `redpanda` en `(healthy)`, les autres en `Up`, sauf `redpanda-init` et
+`config-interfaces`, qui finissent en `Exited (0)` (visibles avec `docker compose ps -a`).
+
+```bash
+docker compose logs config-interfaces
+```
+Attendu, en dernière ligne : `Interfaces prêtes. Identifiants Metabase et NocoDB : admin@example.com / Admin-Kit-2026`.
 
 ```bash
 docker compose exec dwh psql -U dwh_admin -d dwh -c "\dn"
@@ -530,11 +544,31 @@ Relancez `dbt docs generate` après chaque modification des modèles.
 Dans **pgAdmin**, connexion 1 : les schémas `staging`, `core`, `marts` et `api` sont apparus (clic droit sur
 *Schemas* → *Refresh*).
 
+**Metabase** a été connecté avant que dbt crée `core` et `marts` : demandez-lui de relire les tables.
+
+```bash
+docker compose run --rm config-interfaces
+```
+La commande ne refait rien de ce qui existe déjà ; elle lance seulement la synchronisation. Comptez une quinzaine de
+secondes avant que les tables apparaissent dans Metabase. À refaire après chaque `dbt build` qui crée de nouvelles
+tables.
+
 ---
 
 ## 10. Étape 5 — Reportings (Metabase, Power BI, Qlik)
 
-**Metabase.** Ouvrez http://localhost:3000, créez le compte administrateur, puis ajoutez une base de données :
+**Metabase** joue ici le rôle de Qlik ou Power BI : c'est ce que voit un contrôleur de gestion ou un responsable de
+site.
+
+1. Ouvrez http://localhost:3000 et connectez-vous avec `admin@example.com` / `Admin-Kit-2026`.
+2. La base **« Entrepôt logistique (dwh) »** est déjà connectée, avec le rôle `lecture_bi`. Si les schémas `core` et
+   `marts` n'apparaissent pas, lancez `docker compose run --rm config-interfaces` (fin de l'étape 4).
+3. *Parcourir les données* → *Entrepôt logistique (dwh)* → *Marts* : `Mart Logistique Jour`, `Mart Facturation
+   Mois`, `Mart Rh Temps`, `Mart Productivite`.
+4. Pour un graphique : *+ Nouveau* → *Question* → table `Mart Logistique Jour`, résumer *Somme de Nb Commandes
+   Creees* par *Jour* et *Site*, puis *Visualiser*.
+
+Paramètres de connexion, si vous devez l'ajouter à la main :
 
 | Champ | Valeur |
 |---|---|
@@ -543,8 +577,6 @@ Dans **pgAdmin**, connexion 1 : les schémas `staging`, `core`, `marts` et `api`
 | Port | `5432` |
 | Base | `dwh` |
 | Utilisateur / mot de passe | `lecture_bi` / `lecture_bi` |
-
-Tables à explorer : `marts.mart_logistique_jour`, `mart_facturation_mois`, `mart_rh_temps`, `mart_productivite`.
 
 **Power BI Desktop ou Qlik Sense**, sur le même poste :
 - connecteur PostgreSQL ;
@@ -566,11 +598,16 @@ BI ne voient que les données contrôlées.
 
 ## 11. Étape 6 — Portail des référentiels (NocoDB)
 
-1. Ouvrez http://localhost:8081 et créez le compte administrateur.
-2. Ajoutez une source de données externe **PostgreSQL** (menu de connexion à une base existante) :
-   - hôte `dwh`, port `5432`, base `dwh` ;
-   - utilisateur `portail_ref` / `portail_ref` ;
-   - schéma `ref`.
+**À quoi sert NocoDB.** C'est le « portail de référentiels externes » du schéma. Les tarifs, les correspondances de
+codes clients et les traductions de statuts ne viennent d'aucun système source : ils sont tenus par le métier
+(contrôle de gestion, ADV). NocoDB leur donne un **tableur web branché directement sur le schéma `ref`**, sans SQL.
+Une modification y est prise en compte au `dbt build` suivant, sans toucher au code.
+
+Vous n'en avez pas besoin pour le reste du parcours : chaque manipulation a son équivalent SQL ci-dessous.
+
+1. Ouvrez http://localhost:8081 et connectez-vous (**SIGN IN**) avec `admin@example.com` / `Admin-Kit-2026`.
+2. Ouvrez la base **« Référentiels (entrepôt dwh) »**, déjà branchée sur le schéma `ref` avec le rôle `portail_ref` :
+   `clients`, `correspondance_clients`, `objectifs_productivite`, `sites`, `statuts`, `tarifs`.
 3. Ouvrez la table `tarifs` et passez le `prix_unitaire` de `CLI001` / `PREPARATION_LIGNE` de 0,42 à 0,45.
 4. Relancez dbt et comparez la facturation :
 
@@ -781,7 +818,9 @@ absent de `ref.correspondance_clients`.
 
 ### Corriger
 
-Dans les référentiels (ou via NocoDB), puis relance. Attendu : `PASS=60 … ERROR=0`.
+Dans NocoDB : ajoutez la ligne `CLI006` / `Nouveau client` / `true` dans `clients`, puis `wms_sud` / `C-009` /
+`CLI006` dans `correspondance_clients`. Ou en SQL, ci-dessous (avec les tarifs de CLI006). Puis relancez dbt.
+Attendu : `PASS=60 … ERROR=0`.
 
 ```bash
 docker compose exec dwh psql -U portail_ref -d dwh -c \
@@ -869,6 +908,10 @@ Après une remise à zéro, reprenez à l'étape 1.
 | http://localhost:8083 : « Documentation dbt pas encore générée » | `dbt docs generate` pas encore lancé | la commande de l'étape 4, puis recharger la page |
 | pgAdmin ne montre pas `staging`, `core`, `marts` | arbre chargé avant le premier `dbt build` | clic droit sur *Schemas* → *Refresh* |
 | pgAdmin, connexion 2 : `permission denied for schema raw` | comportement voulu : `lecture_bi` ne lit pas `raw` | utiliser la connexion 1 |
+| Metabase ne montre que `ref` | connecté avant le premier `dbt build` | `docker compose run --rm config-interfaces`, puis attendre 15 s |
+| `config-interfaces` en `Exited (1)` | Metabase ou NocoDB pas prêts à temps (poste lent, mémoire) | `docker compose logs config-interfaces`, puis `docker compose run --rm config-interfaces` |
+| NocoDB : « Connection to internal hosts is not allowed » en ajoutant une base à la main | protection de NocoDB contre les bases du réseau interne | déjà levée dans ce kit par `NC_ALLOW_LOCAL_EXTERNAL_DBS: "true"` ; utiliser la base préconfigurée |
+| Écran **SIGN UP** de NocoDB au lieu de **SIGN IN** | volume NocoDB créé par une version précédente du kit, sans compte | `docker compose rm -sf nocodb`, `docker volume rm dwh-logistique-v1_0_nocodb-data`, puis `docker compose up -d` |
 | Conteneur arrêté en `Exited (137)` | mémoire Docker insuffisante | 6 Go minimum ; arrêter Metabase si besoin (`docker compose stop metabase`) |
 | `zsh: no matches found` | URL ou motif de fichier sans guillemets : zsh interprète `?`, `*`, `&` | mettre l'URL entre guillemets ; pour les fichiers, utiliser les commandes de la section 17 |
 | Données inattendues dès le premier lancement (`Des données existent déjà`) | anciennes données d'un autre kit portant le même nom de projet | ce kit s'appelle `dwh-logistique-v1_0` ; supprimer les volumes de l'ancien projet : `docker volume ls` puis `docker volume rm …` |
@@ -886,7 +929,7 @@ Après une remise à zéro, reprenez à l'étape 1.
 | PostgREST | derrière une passerelle d'API (authentification des clients, quotas), jetons émis par l'annuaire |
 | Redpanda un nœud | cluster Kafka ou Redpanda à 3 nœuds, ACL par topic client |
 | PostgreSQL un conteneur | serveur dédié ou service géré, sauvegardes pgBackRest et réplica ; ClickHouse si les volumes l'exigent |
-| pgAdmin sans mot de passe | mode serveur avec authentification, ou outil sur le poste de l'administrateur uniquement |
+| pgAdmin sans mot de passe, comptes Metabase / NocoDB fixes | mode serveur avec authentification, comptes nominatifs reliés à l'annuaire (SSO) |
 
 ---
 
@@ -910,7 +953,8 @@ kit-dwh-logistique-v1_0/
 │       ├── publier_evenements.py        événements par client (Kafka)
 │       ├── prevoir_volumes.py           prévision IA
 │       ├── jeton_client.py              jeton JWT de test pour le portail
-│       └── servir_docs.py               serveur de la documentation dbt (service dbt-docs)
+│       ├── servir_docs.py               serveur de la documentation dbt (service dbt-docs)
+│       └── configurer_interfaces.py     prépare Metabase et NocoDB (service config-interfaces)
 ├── dbt/
 │   ├── dbt_project.yml, profiles.yml
 │   ├── macros/                          nommage des schémas, dernière version, tests maison
@@ -926,6 +970,7 @@ kit-dwh-logistique-v1_0/
 | Élément | Valeur |
 |---|---|
 | Entrepôt | `localhost:55432`, base `dwh` — `dwh_admin` / `dwh_admin` (administration), `lecture_bi` / `lecture_bi` (BI) |
+| Metabase et NocoDB | `admin@example.com` / `Admin-Kit-2026` (créés automatiquement au démarrage) |
 | Sources | `localhost:55433`, base `sources` — `sources` / `sources` |
 | Kafka depuis le poste | `localhost:19092` |
 | Versions | PostgreSQL 17 · Redpanda 24.2.7 · dbt-core 1.11.15 / dbt-postgres 1.11.0 · Python 3.12 · PostgREST 12.2.3 · Metabase 0.52.4 · pgAdmin 9.18 |
