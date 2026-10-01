@@ -1,0 +1,3 @@
+dwh:5432:*:dwh_admin:dwh_admin
+dwh:5432:*:lecture_bi:lecture_bi
+sources-db:5432:*:sources:sources

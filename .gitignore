@@ -1,0 +1,10 @@
+depot/*
+!depot/.gitkeep
+exports/*
+!exports/.gitkeep
+dbt/target/
+dbt/logs/
+__pycache__/
+dbt/.user.yml
+# Point de montage créé par Docker au premier lancement (dossier dbt monté dans ./outils)
+outils/dbt/

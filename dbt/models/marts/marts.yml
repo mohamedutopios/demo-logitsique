@@ -1,0 +1,16 @@
+version: 2
+models:
+  - name: mart_facturation_mois
+    description: Facturation mensuelle par client et prestation.
+    columns:
+      - name: jours_sans_tarif
+        description: Nombre de lignes de volume sans tarif valable ; doit être 0.
+        data_tests:
+          - accepted_values: {arguments: {values: [0]}}
+  - name: mart_logistique_jour
+    data_tests:
+      - combinaison_unique: {arguments: {colonnes: ['jour', 'site', 'code_client']}}
+  - name: mart_productivite
+    columns:
+      - name: unites_par_heure
+        data_tests: [not_null]

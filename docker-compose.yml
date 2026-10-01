@@ -1,0 +1,173 @@
+name: dwh-logistique-v1_0
+
+x-pg-sante: &pg-sante
+  interval: 5s
+  timeout: 5s
+  retries: 20
+
+services:
+  # ---------- Sources simulées : WMS nord et sud, TMS, ticketing, portail DONUT ----------
+  sources-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: sources
+      POSTGRES_PASSWORD: sources
+      POSTGRES_DB: sources
+    volumes:
+      - ./sources:/docker-entrypoint-initdb.d:ro
+      - sources-data:/var/lib/postgresql/data
+    ports: ["55433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sources -d sources"]
+      <<: *pg-sante
+
+  # ---------- Entrepôt de données ----------
+  dwh:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: dwh_admin
+      POSTGRES_PASSWORD: dwh_admin
+      POSTGRES_DB: dwh
+    volumes:
+      - ./dwh:/docker-entrypoint-initdb.d:ro
+      - dwh-data:/var/lib/postgresql/data
+    ports: ["55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dwh_admin -d dwh"]
+      <<: *pg-sante
+
+  # ---------- Bus d'événements (compatible Kafka) ----------
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports: ["19092:19092"]
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    depends_on:
+      redpanda: {condition: service_healthy}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >-
+        rpk topic create erp.commandes -p 3 -X brokers=redpanda:9092;
+        rpk topic create clients.CLI001.expeditions clients.CLI002.expeditions clients.CLI003.expeditions
+        clients.CLI004.expeditions clients.CLI005.expeditions -X brokers=redpanda:9092;
+        exit 0
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.7.2
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    depends_on:
+      redpanda: {condition: service_healthy}
+    ports: ["8080:8080"]
+
+  # ---------- Consommateurs ----------
+  metabase:                       # visualisation (tient lieu de Qlik / Power BI en local)
+    image: metabase/metabase:v0.52.4
+    ports: ["3000:3000"]
+    volumes:
+      - metabase-data:/metabase-data
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db
+    depends_on:
+      dwh: {condition: service_healthy}
+
+  nocodb:                         # portail d'injection / modification des référentiels
+    image: nocodb/nocodb:latest
+    ports: ["8081:8080"]
+    volumes:
+      - nocodb-data:/usr/app/data
+    depends_on:
+      dwh: {condition: service_healthy}
+
+  postgrest:                      # API du portail client (lecture filtrée par client)
+    image: postgrest/postgrest:v12.2.3
+    environment:
+      PGRST_DB_URI: postgres://authenticator:authenticator@dwh:5432/dwh
+      PGRST_DB_SCHEMAS: api
+      PGRST_DB_ANON_ROLE: web_anon
+      PGRST_JWT_SECRET: cle-secrete-de-demonstration-32-caracteres-min
+    ports: ["3001:3000"]
+    depends_on:
+      dwh: {condition: service_healthy}
+
+  pgadmin:                        # interface graphique pour explorer les bases (entrepôt et sources)
+    image: dpage/pgadmin4:9.18
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"                  # mode poste : pas d'écran de connexion
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_SERVER_JSON_FILE: /pgadmin-init/servers.json # connexions préconfigurées
+    # Le fichier de mots de passe doit appartenir à l'utilisateur pgadmin avec les droits 600 : on le copie au démarrage.
+    entrypoint: ["/bin/sh", "-c", "cp /pgadmin-init/pgpass /var/lib/pgadmin/pgpass && chmod 600 /var/lib/pgadmin/pgpass && exec /entrypoint.sh"]
+    volumes:
+      - ./pgadmin:/pgadmin-init:ro
+      - pgadmin-data:/var/lib/pgadmin
+    ports: ["5050:80"]
+    depends_on:
+      dwh: {condition: service_healthy}
+      sources-db: {condition: service_healthy}
+
+  dbt-docs:                       # documentation et lignage dbt (après « dbt docs generate », voir README)
+    build: ./outils
+    image: dwh-logistique-outils:1.0
+    working_dir: /app
+    command: ["python", "services/servir_docs.py"]
+    volumes:
+      - ./outils/services:/app/services:ro
+      - ./dbt:/app/dbt:ro
+    ports: ["8083:8083"]
+
+  # ---------- Outils Python (générateur, chargeur, dbt, services) : lancés à la demande ----------
+  outils:
+    build: ./outils
+    image: dwh-logistique-outils:1.0
+    profiles: ["outils"]
+    working_dir: /app
+    environment:
+      SOURCES_DSN: postgresql://sources:sources@sources-db:5432/sources
+      SOURCES_EXTRACT_DSN: postgresql://extraction:extraction@sources-db:5432/sources
+      DWH_CHARGEUR_DSN: postgresql://chargeur:chargeur@dwh:5432/dwh
+      DWH_LECTURE_DSN: postgresql://lecture_bi:lecture_bi@dwh:5432/dwh
+      DWH_ADMIN_DSN: postgresql://dwh_admin:dwh_admin@dwh:5432/dwh
+      DWH_HOTE: dwh
+      DWH_PORT: "5432"
+      DWH_UTILISATEUR: dwh_admin
+      DWH_MOT_DE_PASSE: dwh_admin
+      KAFKA_BOOTSTRAP: redpanda:9092
+      DEPOT: /depot
+      EXPORTS: /exports
+      PGRST_JWT_SECRET: cle-secrete-de-demonstration-32-caracteres-min
+    volumes:
+      - ./outils:/app
+      - ./dbt:/app/dbt
+      - ./depot:/depot
+      - ./exports:/exports
+    depends_on:
+      sources-db: {condition: service_healthy}
+      dwh: {condition: service_healthy}
+      redpanda-init: {condition: service_completed_successfully}
+
+volumes:
+  sources-data:
+  dwh-data:
+  redpanda-data:
+  metabase-data:
+  nocodb-data:
+  pgadmin-data:

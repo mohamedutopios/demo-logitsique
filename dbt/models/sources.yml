@@ -1,0 +1,23 @@
+version: 2
+sources:
+  - name: raw
+    schema: raw
+    description: Zone brute, alimentée par le chargeur Python, jamais modifiée.
+    tables:
+      - name: extraction
+        description: Toutes les versions des lignes extraites des bases sources.
+      - name: fichiers
+        description: Lignes des fichiers déposés (transporteurs, Kelio, EDI).
+      - name: fichiers_charges
+      - name: evenements
+        description: Messages Kafka des ERP clients.
+  - name: ref
+    schema: ref
+    description: Référentiels modifiables par le portail NocoDB.
+    tables:
+      - name: clients
+      - name: sites
+      - name: correspondance_clients
+      - name: statuts
+      - name: tarifs
+      - name: objectifs_productivite

@@ -1,0 +1,31 @@
+name: dwh_logistique
+version: "1.0.0"
+config-version: 2
+profile: dwh_logistique
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  dwh_logistique:
+    staging:
+      +schema: staging
+      +materialized: view
+    core:
+      +schema: core
+      +materialized: table
+    marts:
+      +schema: marts
+      +materialized: table
+    api:
+      +schema: api
+      +materialized: view
+
+on-run-end:
+  - "GRANT USAGE ON SCHEMA core, marts TO lecture_bi"
+  - "GRANT SELECT ON ALL TABLES IN SCHEMA core, marts TO lecture_bi"
+  - "GRANT USAGE ON SCHEMA api TO web_anon, portail_client"
+  - "GRANT SELECT ON ALL TABLES IN SCHEMA api TO portail_client"

@@ -1,0 +1,12 @@
+dwh_logistique:
+  target: local
+  outputs:
+    local:
+      type: postgres
+      host: "{{ env_var('DWH_HOTE', 'dwh') }}"
+      port: "{{ env_var('DWH_PORT', '5432') | int }}"
+      user: "{{ env_var('DWH_UTILISATEUR', 'dwh_admin') }}"
+      password: "{{ env_var('DWH_MOT_DE_PASSE', 'dwh_admin') }}"
+      dbname: dwh
+      schema: staging
+      threads: 4

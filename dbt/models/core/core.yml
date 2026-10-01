@@ -1,0 +1,51 @@
+version: 2
+models:
+  - name: dim_client
+    columns:
+      - name: code_client
+        data_tests: [unique, not_null]
+  - name: dim_site
+    columns:
+      - name: code_site
+        data_tests: [unique, not_null]
+  - name: fct_receptions
+    columns:
+      - name: id_reception
+        data_tests: [unique, not_null]
+      - name: code_client
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_client'), field: code_client}}
+      - name: statut
+        data_tests:
+          - accepted_values: {arguments: {values: ['ATTENDUE', 'EN_COURS', 'CLOTUREE']}}
+      - name: nb_palettes
+        data_tests:
+          - valeur_positive
+  - name: fct_commandes
+    columns:
+      - name: id_commande
+        data_tests: [unique, not_null]
+      - name: code_client
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_client'), field: code_client}}
+      - name: statut
+        data_tests:
+          - not_null
+          - accepted_values: {arguments: {values: ['CREEE', 'PREPAREE', 'EXPEDIEE', 'ANNULEE']}}
+  - name: fct_expeditions
+    columns:
+      - name: num_expedition
+        data_tests: [unique, not_null]
+      - name: id_commande
+        data_tests:
+          - relationships: {arguments: {to: ref('fct_commandes'), field: id_commande}}
+      - name: statut_transport
+        data_tests:
+          - accepted_values: {arguments: {values: ['EN_ATTENTE_TRANSPORTEUR', 'PRIS_EN_CHARGE', 'EN_TRANSIT', 'INCIDENT', 'LIVRE']}}
+  - name: fct_temps_travail
+    columns:
+      - name: heures
+        data_tests:
+          - valeur_positive

@@ -1,0 +1,37 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "1 · Entrepôt dwh (dwh_admin : tous les schémas)",
+      "Group": "Kit DWH logistique",
+      "Host": "dwh",
+      "Port": 5432,
+      "MaintenanceDB": "dwh",
+      "Username": "dwh_admin",
+      "PassFile": "/var/lib/pgadmin/pgpass",
+      "SSLMode": "disable",
+      "Comments": "raw, ref, staging, core, marts, api, ia, diffusion"
+    },
+    "2": {
+      "Name": "2 · Entrepôt dwh (lecture_bi : vue des outils BI)",
+      "Group": "Kit DWH logistique",
+      "Host": "dwh",
+      "Port": 5432,
+      "MaintenanceDB": "dwh",
+      "Username": "lecture_bi",
+      "PassFile": "/var/lib/pgadmin/pgpass",
+      "SSLMode": "disable",
+      "Comments": "Ce que voient Metabase, Power BI et Qlik : core, marts, ref, ia"
+    },
+    "3": {
+      "Name": "3 · Sources simulées (WMS, TMS, ticketing, DONUT)",
+      "Group": "Kit DWH logistique",
+      "Host": "sources-db",
+      "Port": 5432,
+      "MaintenanceDB": "sources",
+      "Username": "sources",
+      "PassFile": "/var/lib/pgadmin/pgpass",
+      "SSLMode": "disable",
+      "Comments": "wms_nord, wms_sud, tms, ticketing, donut"
+    }
+  }
+}
